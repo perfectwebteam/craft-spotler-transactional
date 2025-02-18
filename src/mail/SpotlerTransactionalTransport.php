@@ -71,7 +71,50 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
+        $getAccessToken = $this->getAccessToken();
+    }
+
+    private function getAccessToken(): string
+    {
+        $options = [
+            'http' => [
+                'ignore_errors' => true,
+                'method' => 'POST',
+                'header' => [
+                    'Accept: application/vnd.flowmailer.v1.12+json',
+                    'Content-Type: application/x-www-form-urlencoded',
+                ],
+                'content' => http_build_query([
+                        'client_id' => $this->key,
+                        'client_secret' => $this->secret,
+                        'grant_type' => 'client_credentials',
+                        'scope' => 'api',
+                    ]),
+            ],
+        ];
         
+        $context  = stream_context_create($options);
+        $response = file_get_contents(
+            'https://login.flowmailer.net/oauth/token',
+            false,
+            $context
+        );
+        $response   = json_decode($response);
+        $statuscode = (int) substr($http_response_header[0], 9, 3);
+
+        if ($statuscode !== 200) {
+            throw new Exception('Could not authorize at Spotler. Error: ' . $response->error_description);
+        }
+
+        if (!isset($response->token_type) || $response->token_type !== 'bearer') {
+            throw new Exception('Could not retrieve bearer token.');
+        }
+
+        if ($response->expires_in <= 0) {
+            throw new Exception('Access token has expired.');
+        }
+        
+        return $response->access_token;
     }
 
     /**
