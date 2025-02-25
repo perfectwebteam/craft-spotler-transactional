@@ -19,14 +19,17 @@
 	},
 	"license": "MIT",
 	"authors": [
-		{
+		{ 
 			"name": "Perfect Web Team",
 			"homepage": "https://perfectwebteam.com"
 		}
 	],
 	"require": {
 		"php": "^8.0.2",
-		"craftcms/cms": "^4.0|^5.0"
+		"craftcms/cms": "^4.0|^5.0",
+		"symfony/http-client": "^6.4",
+		"nyholm/psr7": "^1.8",
+		"flowmailer/flowmailer-php-sdk": "^2.3"
 	},
 	"autoload": {
 		"psr-4": {
@@ -48,7 +51,8 @@
 		},
 		"allow-plugins": {
 			"yiisoft/yii2-composer": true,
-			"craftcms/plugin-installer": true
+			"craftcms/plugin-installer": true,
+			"php-http/discovery": true
 		}
 	}
 }

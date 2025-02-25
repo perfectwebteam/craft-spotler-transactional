@@ -8,22 +8,20 @@
 
 namespace perfectwebteam\spotlertransactional\mail;
 
-use Craft;
-use perfectwebteam\spotlertransactional\SpotlerTransactional;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Mailer\Envelope;
-use Symfony\Component\Mailer\Exception\HttpTransportException;
-use Symfony\Component\Mailer\Header\MetadataHeader;
-use Symfony\Component\Mailer\Header\TagHeader;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractApiTransport;
 use Symfony\Component\Mime\Email;
-use Symfony\Contracts\HttpClient\Exception\DecodingExceptionInterface;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use Exception;
+use Flowmailer\API\Enum\MessageType;
+use Flowmailer\API\Exception\ApiException;
+use Flowmailer\API\Flowmailer;
+use Flowmailer\API\Model\SubmitMessage;
 
 /**
  * Spotler Transactional Transport
@@ -35,24 +33,11 @@ use Exception;
  */
 class SpotlerTransactionalTransport extends AbstractApiTransport
 {
-    private string $apiUrl = '';
-
-    private bool $simulate = true; // Set to false to stop simulation
-
     private string $accountId;
 
     private string $key;
 
     private string $secret;
-
-    private function setApiUrl(string $accountId): void
-    {
-        $this->apiUrl = 'https://api.flowmailer.net/' . $accountId . '/messages';
-
-        if ($this->simulate) {
-            $this->apiUrl .= '/simulate';
-        }
-    }
 
     /**
      * @param string $key
@@ -66,8 +51,6 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
         $this->key = $key;
         $this->secret = $secret;
 
-        $this->setApiUrl($accountId);
-
         parent::__construct($client, $dispatcher, $logger);
     }
 
@@ -76,7 +59,7 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     public function __toString(): string
     {
-        return $this->apiUrl;
+        return '';
     }
 
     /**
@@ -91,71 +74,27 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
-        $getAccessToken = $this->getAccessToken();
+        $flowmailer = Flowmailer::init($this->accountId, $this->key, $this->secret);
+
+        $payload = $this->getPayload($email, $envelope);
+        $submitMessage = (new SubmitMessage())
+            ->setMessageType(MessageType::EMAIL)
+            ->setSubject($payload['subject'])
+            ->setRecipientAddress($payload['recipientAddress'])
+            ->setSenderAddress($payload['senderAddress'])
+            ->setHtml($payload['html'])
+            ->setText($payload['text'])
+        ;
+
         try {
-            $statusCode = $response->getStatusCode();
-            $result = $response->toArray(false);
-        } catch (DecodingExceptionInterface $e) {
-            throw new HttpTransportException('Unable to send an email: ' . $response->getContent(false) . sprintf(' (code %d).', $statusCode), $response);
-        } catch (TransportExceptionInterface $e) {
-            throw new HttpTransportException('Could not reach the remote Mandrill server.', $response, 0, $e);
+            $result = $flowmailer->submitMessage($submitMessage);
+        }
+        catch (ApiException $exception) {
+            throw new Exception('Could not send mail due to: ' . $exception->getErrors());
         }
 
-        if (200 !== $statusCode) {
-            if ('error' === ($result['status'] ?? false)) {
-                throw new HttpTransportException('Unable to send an email: ' . $result['message'] . sprintf(' (code %d).', $result['code']), $response);
-            }
+        $responseData = $result->getResponseBody();
 
-            throw new HttpTransportException(sprintf('Unable to send an email (code %d).', $result['code']), $response);
-        }
-
-        $firstRecipient = reset($result);
-        $sentMessage->setMessageId($firstRecipient['_id']);
-
-        return $response;
-    }
-
-    private function getAccessToken(): string
-    {
-        $options = [
-            'http' => [
-                'ignore_errors' => true,
-                'method' => 'POST',
-                'header' => [
-                    'Accept: application/vnd.flowmailer.v1.12+json',
-                    'Content-Type: application/x-www-form-urlencoded',
-                ],
-                'content' => http_build_query([
-                        'client_id' => $this->key,
-                        'client_secret' => $this->secret,
-                        'grant_type' => 'client_credentials',
-                        'scope' => 'api',
-                    ]),
-            ],
-        ];
-        
-        $context  = stream_context_create($options);
-        $response = file_get_contents(
-            'https://login.flowmailer.net/oauth/token',
-            false,
-            $context
-        );
-        $response   = json_decode($response);
-        $statuscode = (int) substr($http_response_header[0], 9, 3);
-
-        if ($statuscode !== 200) {
-            throw new Exception('Could not authorize at Spotler. Error: ' . $response->error_description);
-        }
-
-        if (!isset($response->token_type) || $response->token_type !== 'bearer') {
-            throw new Exception('Could not retrieve bearer token.');
-        }
-
-        if ($response->expires_in <= 0) {
-            throw new Exception('Access token has expired.');
-        }
-        
-        return $response->access_token;
     }
 
     /**
@@ -165,14 +104,13 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     private function getPayload(Email $email, Envelope $envelope): array
     {
+        $recipients = $this->getRecipients($email, $envelope);
         $payload = [
-            'messageType' => 'EMAIL',
             'html' => $email->getHtmlBody(),
             'text' => $email->getTextBody(),
             'subject' => $email->getSubject(),
-            'headerFromName' => ('' !== $envelope->getSender()->getName() ? $envelope->getSender()->getName() : ''),
-            'headerFromAddress' => $envelope->getSender()->getAddress(),
-            'headerToAddress' => $this->getRecipients($email, $envelope),
+            'senderAddress' => $envelope->getSender()->getAddress(),
+            'recipientAddress' => $recipients['to'][0]['address'],
         ];
 
         return $payload;
@@ -196,16 +134,10 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
                 $type = 'cc';
             }
 
-            $recipientPayload = [
-                'email' => $recipient->getAddress(),
-                'type' => $type,
+            $recipients[$type][] = [
+                'address' => $recipient->getAddress(),
+                'name' => $recipient->getName(),
             ];
-
-            if ('' !== $recipient->getName()) {
-                $recipientPayload['name'] = $recipient->getName();
-            }
-
-            $recipients[] = $recipientPayload;
         }
 
         return $recipients;
