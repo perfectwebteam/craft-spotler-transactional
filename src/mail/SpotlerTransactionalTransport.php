@@ -118,22 +118,6 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     }
 
     /**
-     * @return string|null
-     */
-    private function getEndpoint(): ?string
-    {
-        return ($this->host ?: self::HOST) . ($this->port ? ':' . $this->port : '');
-    }
-
-    /**
-     * @return string|null
-     */
-    private function getApiCall(): ?string
-    {
-        return $this->template ? 'send-template' : 'send';
-    }
-
-    /**
      * @param Email $email
      * @param Envelope $envelope
      * @return array
@@ -250,27 +234,5 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
         }
 
         return $recipients;
-    }
-
-    /**
-     * @param string $template
-     * @return $this
-     */
-    public function setTemplate(string $template): static
-    {
-        $this->template = $template;
-
-        return $this;
-    }
-
-    /**
-     * @param string $subaccount
-     * @return $this
-     */
-    public function setSubaccount(string $subaccount): static
-    {
-        $this->subaccount = $subaccount;
-
-        return $this;
     }
 }

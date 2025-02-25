@@ -34,6 +34,11 @@ class SpotlerTransactionalAdapter extends BaseTransportAdapter
     }
 
     /**
+     * @var string The ACCOUNT ID that should be used
+     */
+    public string $accountId = '';
+
+    /**
      * @var string The CLIENT ID that should be used
      */
     public string $clientId = '';
@@ -44,21 +49,12 @@ class SpotlerTransactionalAdapter extends BaseTransportAdapter
     public string $clientSecret = '';
 
     /**
-     * @var string The subaccount that should be used
-     */
-    public string $subaccount = '';
-
-    /**
-     * @var string The template that should be used
-     */
-    public string $template = '';
-
-    /**
      * @inheritdoc
      */
     public function attributeLabels(): array
     {
         return [
+            'accountId' => Craft::t('spotler-transactional', 'Account ID'),
             'clientId' => Craft::t('spotler-transactional', 'Client ID'),
             'clientSecret' => Craft::t('spotler-transactional', 'Client SECRET'),
         ];
@@ -73,10 +69,9 @@ class SpotlerTransactionalAdapter extends BaseTransportAdapter
         $behaviors['parser'] = [
             'class' => EnvAttributeParserBehavior::class,
             'attributes' => [
+                'accountId',
                 'clientId',
-                'clientSecret',
-                'subaccount',
-                'template'
+                'clientSecret'
             ],
         ];
         return $behaviors;
@@ -88,6 +83,7 @@ class SpotlerTransactionalAdapter extends BaseTransportAdapter
     public function rules(): array
     {
         $rules = parent::rules();
+        $rules[] = [['accountId'], 'required'];
         $rules[] = [['clientId'], 'required'];
         $rules[] = [['clientSecret'], 'required'];
         return $rules;
@@ -108,16 +104,6 @@ class SpotlerTransactionalAdapter extends BaseTransportAdapter
      */
     public function defineTransport(): array|AbstractTransport
     {
-        $transport = new SpotlerTransactionalTransport(App::parseEnv($this->clientId), App::parseEnv($this->clientSecret));
-
-        if ($this->template) {
-            $transport->setTemplate(App::parseEnv($this->template));
-        }
-
-        if ($this->subaccount) {
-            $transport->setSubaccount(App::parseEnv($this->subaccount));
-        }
-
-        return $transport;
+        return new SpotlerTransactionalTransport(App::parseEnv($this->accountId), App::parseEnv($this->clientId), App::parseEnv($this->clientSecret));
     }
 }
