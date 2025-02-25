@@ -35,15 +35,24 @@ use Exception;
  */
 class SpotlerTransactionalTransport extends AbstractApiTransport
 {
-    private const HOST = '';
+    private string $apiUrl = '';
+
+    private bool $simulate = true; // Set to false to stop simulation
+
+    private string $accountId;
 
     private string $key;
 
     private string $secret;
 
-    private string $template = '';
+    private function setApiUrl(string $accountId): void
+    {
+        $this->apiUrl = 'https://api.flowmailer.net/' . $accountId . '/messages';
 
-    private string $subaccount = '';
+        if ($this->simulate) {
+            $this->apiUrl .= '/simulate';
+        }
+    }
 
     /**
      * @param string $key
@@ -51,12 +60,23 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      * @param EventDispatcherInterface|null $dispatcher
      * @param LoggerInterface|null $logger
      */
-    public function __construct(string $key, string $secret, HttpClientInterface $client = null, EventDispatcherInterface $dispatcher = null, LoggerInterface $logger = null)
+    public function __construct(string $accountId, string $key, string $secret, HttpClientInterface $client = null, EventDispatcherInterface $dispatcher = null, LoggerInterface $logger = null)
     {
+        $this->accountId = $accountId;
         $this->key = $key;
         $this->secret = $secret;
 
+        $this->setApiUrl($accountId);
+
         parent::__construct($client, $dispatcher, $logger);
+    }
+
+    /**
+     * @return string
+     */
+    public function __toString(): string
+    {
+        return $this->apiUrl;
     }
 
     /**
@@ -72,6 +92,27 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
         $getAccessToken = $this->getAccessToken();
+        try {
+            $statusCode = $response->getStatusCode();
+            $result = $response->toArray(false);
+        } catch (DecodingExceptionInterface $e) {
+            throw new HttpTransportException('Unable to send an email: ' . $response->getContent(false) . sprintf(' (code %d).', $statusCode), $response);
+        } catch (TransportExceptionInterface $e) {
+            throw new HttpTransportException('Could not reach the remote Mandrill server.', $response, 0, $e);
+        }
+
+        if (200 !== $statusCode) {
+            if ('error' === ($result['status'] ?? false)) {
+                throw new HttpTransportException('Unable to send an email: ' . $result['message'] . sprintf(' (code %d).', $result['code']), $response);
+            }
+
+            throw new HttpTransportException(sprintf('Unable to send an email (code %d).', $result['code']), $response);
+        }
+
+        $firstRecipient = reset($result);
+        $sentMessage->setMessageId($firstRecipient['_id']);
+
+        return $response;
     }
 
     private function getAccessToken(): string
@@ -125,80 +166,14 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     private function getPayload(Email $email, Envelope $envelope): array
     {
         $payload = [
-            'key' => $this->key,
-            'message' => [
-                'html' => $email->getHtmlBody(),
-                'text' => $email->getTextBody(),
-                'subject' => $email->getSubject(),
-                'from_email' => $envelope->getSender()->getAddress(),
-                'to' => $this->getRecipients($email, $envelope),
-                'subaccount' => $this->subaccount ?: null
-            ],
-            'template_name' => $this->template ?: null,
-            'template_content' => [
-                [
-                    'name' => 'body',
-                    'content' => $email->getHtmlBody()
-                ]
-            ]
+            'messageType' => 'EMAIL',
+            'html' => $email->getHtmlBody(),
+            'text' => $email->getTextBody(),
+            'subject' => $email->getSubject(),
+            'headerFromName' => ('' !== $envelope->getSender()->getName() ? $envelope->getSender()->getName() : ''),
+            'headerFromAddress' => $envelope->getSender()->getAddress(),
+            'headerToAddress' => $this->getRecipients($email, $envelope),
         ];
-
-        if ('' !== $envelope->getSender()->getName()) {
-            $payload['message']['from_name'] = $envelope->getSender()->getName();
-        }
-
-        foreach ($email->getAttachments() as $attachment) {
-            $headers = $attachment->getPreparedHeaders();
-            $disposition = $headers->getHeaderBody('Content-Disposition');
-
-            $att = [
-                'content' => $attachment->bodyToString(),
-                'type' => $headers->get('Content-Type')->getBody(),
-            ];
-
-            if ($name = $headers->getHeaderParameter('Content-Disposition', 'name')) {
-                $att['name'] = $name;
-            }
-
-            if ('inline' === $disposition) {
-                $payload['message']['images'][] = $att;
-            } else {
-                $payload['message']['attachments'][] = $att;
-            }
-        }
-
-        $headersToBypass = ['from', 'to', 'cc', 'bcc', 'subject', 'content-type'];
-
-        foreach ($email->getHeaders()->all() as $name => $header) {
-            if (\in_array($name, $headersToBypass, true)) {
-                continue;
-            }
-
-            if ($header instanceof TagHeader) {
-                $payload['message']['tags'] = array_merge(
-                    $payload['message']['tags'] ?? [],
-                    explode(',', $header->getValue())
-                );
-
-                continue;
-            }
-
-            if ($header instanceof MetadataHeader) {
-                $payload['message']['metadata'][$header->getKey()] = $header->getValue();
-
-                continue;
-            }
-
-            $payload['message']['headers'][$header->getName()] = $header->getBodyAsString();
-
-            $returnPaths = SpotlerTransactional::getInstance()->getSettings()->returnPaths ?? [];
-
-            foreach ($returnPaths as $senderDomain => $returnPathDomain) {
-                if (str_contains($envelope->getSender()->getAddress(), "@$senderDomain")) {
-                    $payload['message']['return_path_domain'] = $returnPathDomain;
-                }
-            }
-        }
 
         return $payload;
     }
