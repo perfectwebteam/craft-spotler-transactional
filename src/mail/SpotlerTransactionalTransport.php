@@ -74,27 +74,37 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
+        $payload = $this->getPayload($email, $envelope);
+        $sendMailToRecipient = function($flowmailer, $subject, $recipientAddress, $senderAddress, $html, $text) {
+            $submitMessage = (new SubmitMessage())
+                ->setMessageType(MessageType::EMAIL)
+                ->setSubject($subject)
+                ->setRecipientAddress($recipientAddress)
+                ->setSenderAddress($senderAddress)
+                ->setHtml($html)
+                ->setText($text)
+            ;
+
+            try {
+                $result = $flowmailer->submitMessage($submitMessage);
+            }
+            catch (ApiException $exception) {
+                throw new Exception('Could not send mail due to: ' . $exception->getErrors());
+            }
+
+            return $result->getResponseBody();
+        };
+
+        $allRecipients = [];
+        foreach (['to', 'cc', 'bcc'] as $type) {
+            $allRecipients = array_merge($allRecipients, array_column($payload['recipients'][$type], 'address'));
+        }
+
         $flowmailer = Flowmailer::init($this->accountId, $this->key, $this->secret);
 
-        $payload = $this->getPayload($email, $envelope);
-        $submitMessage = (new SubmitMessage())
-            ->setMessageType(MessageType::EMAIL)
-            ->setSubject($payload['subject'])
-            ->setRecipientAddress($payload['recipientAddress'])
-            ->setSenderAddress($payload['senderAddress'])
-            ->setHtml($payload['html'])
-            ->setText($payload['text'])
-        ;
-
-        try {
-            $result = $flowmailer->submitMessage($submitMessage);
+        foreach ($allRecipients as $recipient) {
+            $response = $sendMailToRecipient($flowmailer, $payload['subject'], $recipient, $payload['senderAddress'], $payload['html'], $payload['text']);
         }
-        catch (ApiException $exception) {
-            throw new Exception('Could not send mail due to: ' . $exception->getErrors());
-        }
-
-        $responseData = $result->getResponseBody();
-
     }
 
     /**
@@ -110,8 +120,9 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
             'text' => $email->getTextBody(),
             'subject' => $email->getSubject(),
             'senderAddress' => $envelope->getSender()->getAddress(),
-            'recipientAddress' => $recipients['to'][0]['address'],
+            'recipients' => $recipients
         ];
+
 
         return $payload;
     }
@@ -123,7 +134,11 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     protected function getRecipients(Email $email, Envelope $envelope): array
     {
-        $recipients = [];
+        $recipients = [
+            'to' => [],
+            'cc' => [],
+            'bcc' => [],
+        ];
 
         foreach ($envelope->getRecipients() as $recipient) {
             $type = 'to';
