@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Spotler Transactional plugin for Craft CMS
  *
@@ -22,6 +23,7 @@ use Flowmailer\API\Enum\MessageType;
 use Flowmailer\API\Exception\ApiException;
 use Flowmailer\API\Flowmailer;
 use Flowmailer\API\Model\SubmitMessage;
+use perfectwebteam\spotlertransactional\models\CustomResponse;
 
 /**
  * Spotler Transactional Transport
@@ -75,36 +77,51 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
         $payload = $this->getPayload($email, $envelope);
-        $sendMailToRecipient = function($flowmailer, $subject, $recipientAddress, $senderAddress, $html, $text) {
+        $sendMailToRecipient = function ($flowmailer, $subject, $recipientAddress, $senderAddress, $html, $text) {
             $submitMessage = (new SubmitMessage())
                 ->setMessageType(MessageType::EMAIL)
                 ->setSubject($subject)
                 ->setRecipientAddress($recipientAddress)
                 ->setSenderAddress($senderAddress)
                 ->setHtml($html)
-                ->setText($text)
-            ;
+                ->setText($text);
 
             try {
                 $result = $flowmailer->submitMessage($submitMessage);
-            }
-            catch (ApiException $exception) {
+            } catch (ApiException $exception) {
                 throw new Exception('Could not send mail due to: ' . $exception->getErrors());
             }
 
-            return $result->getResponseBody();
+            return $result->getResponseBody(); // Returns e.g. 20250101...
         };
 
-        $allRecipients = [];
+        $allRecipientsAddresses = [];
         foreach (['to', 'cc', 'bcc'] as $type) {
-            $allRecipients = array_merge($allRecipients, array_column($payload['recipients'][$type], 'address'));
+            $allRecipientsAddresses = array_merge($allRecipientsAddresses, array_column($payload['recipients'][$type], 'address'));
         }
 
         $flowmailer = Flowmailer::init($this->accountId, $this->key, $this->secret);
 
-        foreach ($allRecipients as $recipient) {
-            $response = $sendMailToRecipient($flowmailer, $payload['subject'], $recipient, $payload['senderAddress'], $payload['html'], $payload['text']);
+        $errorDuringSending = false;
+
+        foreach ($allRecipientsAddresses as $recipientAddress) {
+            $response = $sendMailToRecipient($flowmailer, $payload['subject'], $recipientAddress, $payload['senderAddress'], $payload['html'], $payload['text']);
+            if (!$errorDuringSending && !is_string($response)) {
+                $errorDuringSending = true;
+            }
         }
+
+        if ($errorDuringSending) {
+            if (count($allRecipientsAddresses) > 1) {
+                $message = 'One or multiple emails failed to send.';
+            } else {
+                $message = 'Could not send email.';
+            }
+            
+            throw new Exception($message);
+        }
+
+        return new CustomResponse(200, ['content-type' => ['application/json']], '{}');
     }
 
     /**
