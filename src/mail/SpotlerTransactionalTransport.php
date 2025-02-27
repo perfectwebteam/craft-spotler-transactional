@@ -15,15 +15,17 @@ use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractApiTransport;
 use Symfony\Component\Mime\Email;
-use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use Exception;
 use Flowmailer\API\Enum\MessageType;
-use Flowmailer\API\Exception\ApiException;
 use Flowmailer\API\Flowmailer;
 use Flowmailer\API\Model\SubmitMessage;
 use perfectwebteam\spotlertransactional\models\CustomResponse;
+use Symfony\Component\Mailer\Header\TagHeader;
+use perfectwebteam\spotlertransactional\SpotlerTransactional;
+use Flowmailer\API\Collection\HeaderCollection;
+use Flowmailer\API\Model\Header;
 
 /**
  * Spotler Transactional Transport
@@ -65,62 +67,46 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     }
 
     /**
+     * @return string e.g. Message ID 20250101...
+     */
+    private function flowmailerSendMail(Flowmailer $flowmailer, string $subject, string $to, string $from, string $html, string $text, HeaderCollection $headers)
+    {
+        $submitMessage = (new SubmitMessage())
+            ->setMessageType(MessageType::EMAIL)
+            ->setSubject($subject)
+            ->setSenderAddress($from)
+            ->setRecipientAddress($to)
+            ->setHtml($html)
+            ->setText($text)
+            ->setHeaders($headers);
+
+        try {
+            $result = $flowmailer->submitMessage($submitMessage);
+        } catch (Exception $exception) {
+            throw new Exception('Could not send mail due to: ' . $exception->getMessage());
+        }
+
+        return $result->getResponseBody();
+    }
+
+    /**
      * @param SentMessage $sentMessage
      * @param Email $email
      * @param Envelope $envelope
      * @return ResponseInterface
-     * @throws TransportExceptionInterface
-     * @throws \Symfony\Contracts\HttpClient\Exception\ClientExceptionInterface
-     * @throws \Symfony\Contracts\HttpClient\Exception\RedirectionExceptionInterface
-     * @throws \Symfony\Contracts\HttpClient\Exception\ServerExceptionInterface
      */
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
-        $payload = $this->getPayload($email, $envelope);
-        $sendMailToRecipient = function ($flowmailer, $subject, $recipientAddress, $senderAddress, $html, $text) {
-            $submitMessage = (new SubmitMessage())
-                ->setMessageType(MessageType::EMAIL)
-                ->setSubject($subject)
-                ->setRecipientAddress($recipientAddress)
-                ->setSenderAddress($senderAddress)
-                ->setHtml($html)
-                ->setText($text);
-
-            try {
-                $result = $flowmailer->submitMessage($submitMessage);
-            } catch (ApiException $exception) {
-                throw new Exception('Could not send mail due to: ' . $exception->getErrors());
-            }
-
-            return $result->getResponseBody(); // Returns e.g. 20250101...
-        };
-
-        $allRecipientsAddresses = [];
-        foreach (['to', 'cc', 'bcc'] as $type) {
-            $allRecipientsAddresses = array_merge($allRecipientsAddresses, array_column($payload['recipients'][$type], 'address'));
-        }
-
         $flowmailer = Flowmailer::init($this->accountId, $this->key, $this->secret);
+        $payload = $this->getPayload($email, $envelope);
 
-        $errorDuringSending = false;
-
-        foreach ($allRecipientsAddresses as $recipientAddress) {
-            $response = $sendMailToRecipient($flowmailer, $payload['subject'], $recipientAddress, $payload['senderAddress'], $payload['html'], $payload['text']);
-            if (!$errorDuringSending && !is_string($response)) {
-                $errorDuringSending = true;
-            }
+        $response = $this->flowmailerSendMail($flowmailer, $payload['subject'], $payload['to'], $payload['from'], $payload['html'], $payload['text'], $payload['allHeaders']);
+        if (!is_string($response)) {
+            // Return error
+            throw new Exception('Could not send email as response did not return Message ID.');
         }
 
-        if ($errorDuringSending) {
-            if (count($allRecipientsAddresses) > 1) {
-                $message = 'One or multiple emails failed to send.';
-            } else {
-                $message = 'Could not send email.';
-            }
-            
-            throw new Exception($message);
-        }
-
+        // Return success
         return new CustomResponse(200, ['content-type' => ['application/json']], '{}');
     }
 
@@ -132,16 +118,77 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     private function getPayload(Email $email, Envelope $envelope): array
     {
         $recipients = $this->getRecipients($email, $envelope);
+        $allHeaders = $this->getAllHeaders($email, $envelope, $recipients);
+
+        $to = '';
+        foreach ($allHeaders as $header) {
+            if ($header->getName() !== 'To') continue;
+
+            $to = $header->getValue();
+            break;
+        }
+
+        if (empty($to)) {
+            throw new Exception('Could not find "To:" in headers.');
+        }
+
         $payload = [
+            'subject' => $email->getSubject(),
+            'from' => $envelope->getSender()->getAddress(),
+            'to' => $to,
             'html' => $email->getHtmlBody(),
             'text' => $email->getTextBody(),
-            'subject' => $email->getSubject(),
-            'senderAddress' => $envelope->getSender()->getAddress(),
-            'recipients' => $recipients
+            'attachments' => [],
+            'allHeaders' => $allHeaders,
         ];
 
-
         return $payload;
+    }
+
+    /**
+     * @return array
+     */
+    private function getAllHeaders(Email $email, Envelope $envelope, array $recipients): HeaderCollection
+    {
+        $allHeaders = new HeaderCollection();
+
+        foreach ($email->getHeaders()->all() as $name => $header) {
+            $allHeaders->add(new Header($header->getName(), $header->getBodyAsString()));
+        }
+
+        return $allHeaders;
+    }
+
+    /**
+     * @return array
+     */
+    private function getAttachments(Email $email): array
+    {
+        $attachments = [];
+
+        foreach ($email->getAttachments() as $attachment) {
+            $headers = $attachment->getPreparedHeaders();
+            $disposition = $headers->getHeaderBody('Content-Disposition');
+
+            $attributes = [
+                'content' => $attachment->bodyToString(),
+                'contentType' => $headers->get('Content-Type')->getBody(),
+            ];
+
+            if ($name = $headers->getHeaderParameter('Content-Disposition', 'name')) {
+                $attributes['filename'] = basename($name);
+            }
+
+            if ('inline' === $disposition) {
+                $attributes['disposition'] = 'inline';
+            } else {
+                $attributes['disposition'] = 'attachment';
+            }
+
+            $attachments[] = $attributes;
+        }
+
+        return $attachments;
     }
 
     /**
@@ -166,10 +213,7 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
                 $type = 'cc';
             }
 
-            $recipients[$type][] = [
-                'address' => $recipient->getAddress(),
-                'name' => $recipient->getName(),
-            ];
+            $recipients[$type][] = $recipient->getAddress();
         }
 
         return $recipients;
