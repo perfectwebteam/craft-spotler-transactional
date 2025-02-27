@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Spotler Transactional plugin for Craft CMS
  *
@@ -41,14 +42,14 @@ class SpotlerTransactional extends Plugin
 
         self::$plugin = $this;
 
-	    $eventName = defined(sprintf('%s::EVENT_REGISTER_MAILER_TRANSPORT_TYPES', MailerHelper::class))
-		    ? MailerHelper::EVENT_REGISTER_MAILER_TRANSPORT_TYPES // Craft 4
-		    : MailerHelper::EVENT_REGISTER_MAILER_TRANSPORTS; // Craft 5+
+        $eventName = defined(sprintf('%s::EVENT_REGISTER_MAILER_TRANSPORT_TYPES', MailerHelper::class))
+            ? MailerHelper::EVENT_REGISTER_MAILER_TRANSPORT_TYPES // Craft 4
+            : MailerHelper::EVENT_REGISTER_MAILER_TRANSPORTS; // Craft 5+
 
         Event::on(
             MailerHelper::class,
-	        $eventName,
-            static function(RegisterComponentTypesEvent $event) {
+            $eventName,
+            static function (RegisterComponentTypesEvent $event) {
                 $event->types[] = SpotlerTransactionalAdapter::class;
             }
         );

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Spotler Transactional plugin for Craft CMS
  *

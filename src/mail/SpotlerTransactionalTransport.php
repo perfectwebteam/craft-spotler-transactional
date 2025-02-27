@@ -39,21 +39,23 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
 {
     private string $accountId;
 
-    private string $key;
+    private string $clientKey;
 
-    private string $secret;
+    private string $clientSecret;
 
     /**
-     * @param string $key
+     * @param string $accountId
+     * @param string $clientKey
+     * @param string $clientSecret
      * @param HttpClientInterface|null $client
      * @param EventDispatcherInterface|null $dispatcher
      * @param LoggerInterface|null $logger
      */
-    public function __construct(string $accountId, string $key, string $secret, HttpClientInterface $client = null, EventDispatcherInterface $dispatcher = null, LoggerInterface $logger = null)
+    public function __construct(string $accountId, string $clientKey, string $clientSecret, HttpClientInterface $client = null, EventDispatcherInterface $dispatcher = null, LoggerInterface $logger = null)
     {
         $this->accountId = $accountId;
-        $this->key = $key;
-        $this->secret = $secret;
+        $this->clientKey = $clientKey;
+        $this->clientSecret = $clientSecret;
 
         parent::__construct($client, $dispatcher, $logger);
     }
@@ -67,17 +69,24 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     }
 
     /**
-     * @return string e.g. Message ID 20250101...
+     * @param Flowmailer $flowmailer
+     * @param string $subject
+     * @param string $to
+     * @param string $from
+     * @param string $htmlBody
+     * @param string $textBody
+     * @param HeaderCollection $headers
+     * @return string e.g. "20250101..." (Message ID)
      */
-    private function flowmailerSendMail(Flowmailer $flowmailer, string $subject, string $to, string $from, string $html, string $text, HeaderCollection $headers)
+    private function flowmailerSendMail(Flowmailer $flowmailer, string $subject, string $to, string $from, string $htmlBody, string $textBody, HeaderCollection $headers): bool
     {
         $submitMessage = (new SubmitMessage())
             ->setMessageType(MessageType::EMAIL)
             ->setSubject($subject)
             ->setSenderAddress($from)
             ->setRecipientAddress($to)
-            ->setHtml($html)
-            ->setText($text)
+            ->setHtml($htmlBody)
+            ->setText($textBody)
             ->setHeaders($headers);
 
         try {
@@ -86,7 +95,13 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
             throw new Exception('Could not send mail due to: ' . $exception->getMessage());
         }
 
-        return $result->getResponseBody();
+        $responseBody = $result->getResponseBody();
+
+        if (!is_string($responseBody)) {
+            throw new Exception('Could not send email as response did not return Message ID.');
+        }
+
+        return true;
     }
 
     /**
@@ -97,14 +112,10 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
      */
     protected function doSendApi(SentMessage $sentMessage, Email $email, Envelope $envelope): ResponseInterface
     {
-        $flowmailer = Flowmailer::init($this->accountId, $this->key, $this->secret);
+        $flowmailer = Flowmailer::init($this->accountId, $this->clientKey, $this->clientSecret);
         $payload = $this->getPayload($email, $envelope);
 
-        $response = $this->flowmailerSendMail($flowmailer, $payload['subject'], $payload['to'], $payload['from'], $payload['html'], $payload['text'], $payload['allHeaders']);
-        if (!is_string($response)) {
-            // Return error
-            throw new Exception('Could not send email as response did not return Message ID.');
-        }
+        $this->flowmailerSendMail($flowmailer, $payload['subject'], $payload['to'], $payload['from'], $payload['html'], $payload['text'], $payload['allHeaders']);
 
         // Return success
         return new CustomResponse(200, ['content-type' => ['application/json']], '{}');
@@ -146,7 +157,10 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     }
 
     /**
-     * @return array
+     * @param Email $email
+     * @param Envelope $envelope
+     * @param array $recipients
+     * @return HeaderCollection
      */
     private function getAllHeaders(Email $email, Envelope $envelope, array $recipients): HeaderCollection
     {
@@ -160,6 +174,7 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     }
 
     /**
+     * @param Email $email
      * @return array
      */
     private function getAttachments(Email $email): array
