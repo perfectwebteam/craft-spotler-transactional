@@ -36,11 +36,11 @@ composer require perfectwebteam/craft-spotler-transactional
 Once Spotler Transactional is installed:
 
 1. Go to **Settings** → **Email**.
-2. Make sure that the **System Email Address** is set to an email for which the domain is a verified [Sending Domain](https://mandrillapp.com/settings/sending-domains). 
+2. Make sure that the **System Email Address** is set to an email for which the domain is a verified Sending Domain.
 3. Change the **Transport Type** setting to **Spotler Transactional**.
 4. Enter your **Account ID**, **Client ID** and **Client SECRET**.
 5. Click **Save**.
 
-> **Tip:** The Account ID, Client ID, Client SECRET settings can be set using environment variables. See [Environmental Configuration](https://craftcms.com/docs/3.x/config/#environmental-configuration) in the Craft docs to learn more about that.
+> **Tip:** The Account ID, Client ID, Client SECRET settings can be set using environment variables. See [Environmental Configuration](https://craftcms.com/docs/4.x/config/#environmental-configuration) in the Craft docs to learn more about that.
 
 Brought to you by [Perfect Web Team](https://perfectwebteam.com)
