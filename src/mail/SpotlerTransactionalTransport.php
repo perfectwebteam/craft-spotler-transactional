@@ -22,8 +22,6 @@ use Flowmailer\API\Enum\MessageType;
 use Flowmailer\API\Flowmailer;
 use Flowmailer\API\Model\SubmitMessage;
 use perfectwebteam\spotlertransactional\models\CustomResponse;
-use Symfony\Component\Mailer\Header\TagHeader;
-use perfectwebteam\spotlertransactional\SpotlerTransactional;
 use Flowmailer\API\Collection\HeaderCollection;
 use Flowmailer\API\Model\Header;
 
