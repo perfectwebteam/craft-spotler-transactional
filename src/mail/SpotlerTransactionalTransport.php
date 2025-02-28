@@ -149,7 +149,7 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
             'to' => $to,
             'html' => $email->getHtmlBody(),
             'text' => $email->getTextBody(),
-            'attachments' => [],
+            'attachments' => $this->getAttachments($email),
             'allHeaders' => $allHeaders,
         ];
 
@@ -181,12 +181,18 @@ class SpotlerTransactionalTransport extends AbstractApiTransport
     {
         $attachments = [];
 
-        foreach ($email->getAttachments() as $attachment) {
-            $headers = $attachment->getPreparedHeaders();
+        $emailAttachments = $email->getAttachments();
+
+        if (count($emailAttachments) <= 0) {
+            return [];
+        }
+
+        foreach ($emailAttachments as $emailAttachment) {
+            $headers = $emailAttachment->getPreparedHeaders();
             $disposition = $headers->getHeaderBody('Content-Disposition');
 
             $attributes = [
-                'content' => $attachment->bodyToString(),
+                'content' => $emailAttachment->bodyToString(),
                 'contentType' => $headers->get('Content-Type')->getBody(),
             ];
 
