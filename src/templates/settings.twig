@@ -1,0 +1,31 @@
+{% import "_includes/forms" as forms %}
+
+{{ forms.autosuggestField({
+    label: "Account ID",
+    id: 'accountId',
+    name: 'accountId',
+    instructions: "You can find this in your Spotler Transactional settings.",
+    suggestEnvVars: true,
+    value: adapter.accountId,
+    errors: adapter.getErrors('accountId'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: "Client ID",
+    id: 'clientId',
+    name: 'clientId',
+    instructions: "You can find this in your Spotler Transactional settings.",
+    suggestEnvVars: true,
+    value: adapter.clientId,
+    errors: adapter.getErrors('clientId'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: "Client SECRET",
+    id: 'clientSecret',
+    name: 'clientSecret',
+    instructions: "You can find this in your Spotler Transactional settings.",
+    suggestEnvVars: true,
+    value: adapter.clientSecret,
+    errors: adapter.getErrors('clientSecret'),
+}) }}
